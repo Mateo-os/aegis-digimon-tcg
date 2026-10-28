@@ -1,5 +1,5 @@
 import { applyScenarioEffects } from "../scenario/effects.js";
-import type { Client } from "colyseus";
+import type { StateView } from "@colyseus/schema";
 import {
   PlayerState,
   isDigimonWorldAvatarId,
@@ -267,7 +267,7 @@ export async function runOneTurn(engine: GameEngine): Promise<void> {
  * syncPublicCounts before each broadcast); that hook is owned by the
  * intent-protocol-and-room subsystem.
  */
-export function makeStateView(engine: GameEngine, seat: Seat | undefined): Client["view"] {
+export function makeStateView(engine: GameEngine, seat: Seat | undefined): StateView {
   syncPublicCounts(engine.state);
   return buildStateView(engine.state, seat);
 }
@@ -280,14 +280,14 @@ export function makeStateView(engine: GameEngine, seat: Seat | undefined): Clien
  * that just left a `@view`-tagged zone (e.g. a card played from hand), and
  * `AegisRoom.rebuildClientViews` for the call site engine backs.
  */
-export function refreshStateView(engine: GameEngine, view: Client["view"], seat: Seat | undefined): void {
+export function refreshStateView(engine: GameEngine, view: StateView | undefined, seat: Seat | undefined): void {
   if (view === undefined) return;
   syncPublicCounts(engine.state);
   refreshStateViewInto(view, engine.state, seat);
 }
 
 /** Release a client's view of the cards that left its sight; the room calls it after each patch. */
-export function forgetWithheldCards(engine: GameEngine, view: Client["view"], seat: Seat | undefined): void {
+export function forgetWithheldCards(engine: GameEngine, view: StateView | undefined, seat: Seat | undefined): void {
   if (view === undefined) return;
   forgetWithheldCardsIn(view, engine.state, seat);
 }
@@ -312,7 +312,7 @@ export function installVisibility(engine: GameEngine, notify: VisibilityPort): v
  */
 export function exposeCardToView(
   engine: GameEngine,
-  view: Client["view"],
+  view: StateView | undefined,
   viewerSeat: Seat | undefined,
   ownerSeat: Seat,
   zone: VisibilityZone,

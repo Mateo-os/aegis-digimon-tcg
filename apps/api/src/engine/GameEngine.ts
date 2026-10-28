@@ -13,7 +13,7 @@ import { ContinuousEffectScope } from "./effects/ContinuousEffectScope.js";
 import { CardKind, EffectTiming, GameState, type CardInstance, type Seat } from "@aegis/shared";
 import { buildCombatHooks } from "./gameEngine/combatHooks.js";
 import type { CardColor, Permanent, ZoneRef } from "@aegis/shared";
-import type { Client } from "colyseus";
+import type { StateView } from "@colyseus/schema";
 import type { ScenarioFixture } from "./scenario/types.js";
 import type { VisibilityZone } from "./state/access.js";
 import {
@@ -946,15 +946,15 @@ export class GameEngine {
     return runOneTurn(this);
   }
 
-  makeStateView(seat: Seat | undefined): Client["view"] {
+  makeStateView(seat: Seat | undefined): StateView {
     return makeStateView(this, seat);
   }
 
-  refreshStateView(view: Client["view"], seat: Seat | undefined): void {
+  refreshStateView(view: StateView | undefined, seat: Seat | undefined): void {
     return refreshStateView(this, view, seat);
   }
 
-  forgetWithheldCards(view: Client["view"], seat: Seat | undefined): void {
+  forgetWithheldCards(view: StateView | undefined, seat: Seat | undefined): void {
     return forgetWithheldCards(this, view, seat);
   }
 
@@ -963,7 +963,7 @@ export class GameEngine {
   }
 
   exposeCardToView(
-    view: Client["view"],
+    view: StateView | undefined,
     viewerSeat: Seat | undefined,
     ownerSeat: Seat,
     zone: VisibilityZone,
