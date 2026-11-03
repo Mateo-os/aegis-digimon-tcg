@@ -134,7 +134,7 @@ export class SimulatorSession {
   getLegalActions(seat: Seat): SimulatorActionList {
     return {
       version: this.acceptedActions,
-      actions: buildLegalActions({ state: this.state, seat, decisionRequest: this.getDecisionRequest(seat) }),
+      actions: buildLegalActions({ engine: this.engine, seat, decisionRequest: this.getDecisionRequest(seat) }),
     };
   }
 

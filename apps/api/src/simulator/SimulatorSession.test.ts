@@ -135,8 +135,23 @@ async function playWithBots({ session, policies, maxSteps, onAccepted }: PlayWit
   throw new Error(`The game did not end within ${maxSteps} actions`);
 }
 
+function sortKeys(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(sortKeys);
+  }
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value)
+        .filter(([, entry]) => entry !== undefined)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, entry]) => [key, sortKeys(entry)]),
+    );
+  }
+  return value;
+}
+
 function normalizeIntent(intent: Intent): string {
-  return JSON.stringify(JSON.parse(JSON.stringify(intent)));
+  return JSON.stringify(sortKeys(intent));
 }
 
 function isIntentOffered(actions: readonly SimulatorAction[], intent: Intent): boolean {

@@ -1,105 +1,100 @@
+import type { Intent } from "@aegis/shared/protocol/intents";
 import { Phase, type Seat } from "@aegis/shared/schema/enums";
 import type { GameState } from "@aegis/shared/schema/GameState";
-import { enumerateMainPhaseCandidates, type Candidate } from "#api/bot/candidates";
-import { buildBotView, type BotUnit, type BotView } from "#api/bot/view";
-import { formatCardName } from "#api/simulator/actions/formatCardName";
+import { breedingActions, mainActions, type TrainingAction } from "#api/bot/training/actions";
+import type { GameEngine } from "#api/engine/GameEngine";
+import { getCardLabel } from "#api/simulator/actions/getCardLabel";
 import type { SimulatorActionDraft } from "#api/simulator/actions/SimulatorAction";
 
-type Params = { state: GameState; seat: Seat };
+type Params = { engine: GameEngine; seat: Seat };
 
-type DescribeCandidateParams = { view: BotView; candidate: Candidate };
+type DescribeParams = { state: GameState; seat: Seat; action: TrainingAction };
 
-const MIN_LEVEL_TO_LEAVE_BREEDING = 3;
+type DescribeIntentParams = DescribeParams & { intent: Intent };
 
-function formatUnit(unit: BotUnit | undefined): string {
-  return formatCardName(unit?.cardId);
-}
-
-function findEffectDescription({ view, candidate }: DescribeCandidateParams): string {
-  if (candidate.intent.type !== "activateEffect") {
+function formatCost(action: TrainingAction): string {
+  if (action.projectedCost === undefined) {
     return "";
   }
-  const { sourceInstanceId, effectKey } = candidate.intent;
-  const effects = [...view.hand, ...view.board, ...(view.breeding ? [view.breeding] : [])].flatMap(
-    (card) => card.activatableEffects,
-  );
-  return (
-    effects.find((effect) => effect.instanceId === sourceInstanceId && effect.effectKey === effectKey)?.description ??
-    effectKey
-  );
+  return ` (cost ${action.projectedCost})`;
 }
 
-function findActivationSource({ view, candidate }: DescribeCandidateParams): string {
-  if (candidate.intent.type !== "activateEffect") {
+function describePlay({ state, seat, intent }: DescribeIntentParams): string {
+  if (intent.type !== "playCard") {
     return "";
   }
-  const { sourceInstanceId } = candidate.intent;
-  const handCard = view.hand.find((card) => card.instanceId === sourceInstanceId);
-  if (handCard) {
-    return formatCardName(handCard.cardId);
+  const card = getCardLabel({ state, seat, id: intent.instanceId });
+  if (intent.assembly) {
+    return `Play ${card} with Assembly`;
   }
-  const unit = [...view.board, ...(view.breeding ? [view.breeding] : [])].find(
-    (candidateUnit) =>
-      candidateUnit.topCardInstanceId === sourceInstanceId || candidateUnit.permanentId === sourceInstanceId,
-  );
-  return formatUnit(unit);
+  if (intent.digiXros) {
+    return `Play ${card} with DigiXros`;
+  }
+  return `Play ${card}`;
 }
 
-function describeCandidate(params: DescribeCandidateParams): string {
-  const { candidate } = params;
-  const cardName = formatCardName(candidate.definition?.cardId);
-  switch (candidate.kind) {
-    case "attackPlayer":
-      return `Attack the opponent with ${formatUnit(candidate.attacker)}`;
-    case "attackDigimon":
-      return `Attack ${formatUnit(candidate.target)} with ${formatUnit(candidate.attacker)}`;
-    case "digivolve":
-      return `Digivolve ${formatUnit(candidate.base)} into ${cardName} (cost ${candidate.cost})`;
+function describeIntent(params: DescribeIntentParams): string {
+  const { state, seat, action, intent } = params;
+  const label = (id: string) => getCardLabel({ state, seat, id });
+  switch (intent.type) {
+    case "playCard":
+      return describePlay(params);
+    case "digivolve": {
+      const route =
+        intent.alternateRequirementIndex === undefined
+          ? ""
+          : ` using alternate route ${intent.alternateRequirementIndex}`;
+      return `Digivolve ${label(intent.permanentId)} into ${label(intent.instanceId)}${route}`;
+    }
     case "dnaDigivolve":
-      return `DNA digivolve into ${cardName} (cost ${candidate.cost})`;
+      return `DNA digivolve ${intent.materialPermanentIds.map(label).join(" + ")} into ${label(intent.instanceId)}`;
+    case "appFusion":
+      return `App Fusion ${label(intent.permanentId)} into ${label(intent.instanceId)} with ${label(intent.linkedInstanceId)}`;
     case "linkCard":
-      return `Link ${cardName} to ${formatUnit(candidate.base)}`;
-    case "playDigimon":
-    case "playTamer":
-    case "playOption":
-      return `Play ${cardName} (cost ${candidate.cost})`;
+      return `Link ${label(intent.instanceId)} to ${label(intent.targetPermanentId)}`;
+    case "attack":
+      if (intent.target.kind === "player") {
+        return `Attack the opponent with ${label(intent.attackerPermanentId)}`;
+      }
+      return `Attack ${label(intent.target.permanentId)} with ${label(intent.attackerPermanentId)}`;
     case "activateEffect":
-      return `Activate ${findActivationSource(params)}: ${findEffectDescription(params)}`;
+      return `Activate ${label(intent.sourceInstanceId)}: ${action.label}`;
+    case "hatchEgg":
+      return "Hatch a Digi-Egg";
+    case "moveFromBreeding":
+      return `Move ${label(intent.permanentId)} to the battle area`;
     case "endPhase":
-      return "End your turn";
+      return state.phase === Phase.Breeding ? "Skip the breeding phase" : "End your turn";
+    default:
+      return action.label;
   }
 }
 
-function buildBreedingActions(view: BotView): SimulatorActionDraft[] {
-  const actions: SimulatorActionDraft[] = [];
-  if (!view.breeding && view.eggDeckCount > 0) {
-    actions.push({ kind: "fixed", label: "Hatch a Digi-Egg", intent: { type: "hatchEgg" } });
-  }
-  if (view.breeding && view.breeding.level >= MIN_LEVEL_TO_LEAVE_BREEDING) {
-    actions.push({
-      kind: "fixed",
-      label: `Move ${formatUnit(view.breeding)} to the battle area`,
-      intent: { type: "moveFromBreeding", permanentId: view.breeding.permanentId },
-    });
-  }
-  actions.push({ kind: "fixed", label: "Skip the breeding phase", intent: { type: "endPhase" } });
-  return actions;
+function describeAction(params: DescribeParams): string {
+  return `${describeIntent({ ...params, intent: params.action.intent })}${formatCost(params.action)}`;
 }
 
-export function buildTurnActions({ state, seat }: Params): SimulatorActionDraft[] {
-  const view = buildBotView(state, seat);
-  if (!view) {
-    return [];
+function listTrainingActions({ engine, seat }: Params): TrainingAction[] {
+  if (engine.state.phase === Phase.Breeding) {
+    return breedingActions(engine, seat);
   }
-  if (state.phase === Phase.Breeding) {
-    return buildBreedingActions(view);
-  }
-  if (state.phase === Phase.Main) {
-    return enumerateMainPhaseCandidates(view).map((candidate) => ({
-      kind: "fixed",
-      label: describeCandidate({ view, candidate }),
-      intent: candidate.intent,
-    }));
+  if (engine.state.phase === Phase.Main) {
+    return mainActions(engine, seat);
   }
   return [];
+}
+
+export function buildTurnActions(params: Params): SimulatorActionDraft[] {
+  const state = params.engine.state;
+  const seen = new Set<string>();
+  const drafts: SimulatorActionDraft[] = [];
+  for (const action of listTrainingActions(params)) {
+    const key = JSON.stringify(action.intent);
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    drafts.push({ kind: "fixed", label: describeAction({ state, seat: params.seat, action }), intent: action.intent });
+  }
+  return drafts;
 }
