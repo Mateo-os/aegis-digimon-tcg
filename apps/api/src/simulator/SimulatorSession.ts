@@ -5,6 +5,9 @@ import { GameState } from "@aegis/shared/schema/GameState";
 import { createMatchReplayRecorder } from "#api/bot/createMatchReplayRecorder";
 import { GameEngine } from "#api/engine/GameEngine";
 import type { ReplayRecord } from "#api/replays/inputs/types";
+import { buildLegalActions } from "#api/simulator/actions/buildLegalActions";
+import { resolveActionIntent } from "#api/simulator/actions/resolveActionIntent";
+import type { SimulatorActionList } from "#api/simulator/actions/SimulatorAction";
 import { filterEventForSeat } from "#api/simulator/filterEventForSeat";
 import { findSeatToAct } from "#api/simulator/findSeatToAct";
 import "#api/cards/index";
@@ -19,7 +22,13 @@ type GameOverEvent = Extract<ServerEvent, { kind: "gameOver" }>;
 
 export type SimulatorResult = GameOverEvent["result"] & { reason: GameOverEvent["reason"] };
 
-export type SimulatorRejectReason = RejectReason | "not-seat-to-act" | "engine-error";
+export type SimulatorRejectReason =
+  | RejectReason
+  | "not-seat-to-act"
+  | "engine-error"
+  | "stale-actions"
+  | "unknown-action"
+  | "invalid-choice";
 
 export type ActResult =
   | { ok: true; events: SimulatorEvent[]; seatToAct: Seat | undefined }
@@ -30,6 +39,8 @@ export type SimulatorEventListener = (event: SimulatorEvent) => void;
 type CreateParams = { seed: number; players: readonly [SimulatorPlayer, SimulatorPlayer]; firstSeat?: Seat };
 
 type ActParams = { seat: Seat; intent: Intent };
+
+type ActOnActionParams = { seat: Seat; actionId: number; choice?: readonly string[]; version: number };
 
 type GetEventsParams = { seat: Seat; afterSeq: number };
 
@@ -54,6 +65,7 @@ export class SimulatorSession {
   private queue: Promise<unknown> = Promise.resolve();
   private result: SimulatorResult | undefined;
   private started = false;
+  private acceptedActions = 0;
 
   private constructor({ seed, players, firstSeat }: CreateParams) {
     this.recorder = createMatchReplayRecorder({ seed, firstSeat, state: this.state });
@@ -93,28 +105,37 @@ export class SimulatorSession {
     });
   }
 
-  act({ seat, intent }: ActParams): Promise<ActResult> {
+  act(params: ActParams): Promise<ActResult> {
+    return this.runExclusive(() => this.applyAct(params));
+  }
+
+  actOnAction({ seat, actionId, choice, version }: ActOnActionParams): Promise<ActResult> {
     return this.runExclusive(async () => {
-      const afterSeq = this.log.length;
-      if (!this.started || findSeatToAct(this.state) !== seat) {
-        return { ok: false, reason: "not-seat-to-act", events: [] };
-      }
-      try {
-        const result = this.recorder.applyIntent(seat, intent, () => this.engine.applyIntent(seat, intent));
-        if (!result.ok) {
-          return { ok: false, reason: result.reason, events: this.getEvents({ seat, afterSeq }) };
-        }
-      } catch (error) {
+      if (version !== this.acceptedActions) {
         return {
           ok: false,
-          reason: "engine-error",
-          message: error instanceof Error ? error.message : String(error),
-          events: this.getEvents({ seat, afterSeq }),
+          reason: "stale-actions",
+          message: "The game has moved on since this action list was read",
+          events: [],
         };
       }
-      await this.settle();
-      return { ok: true, events: this.getEvents({ seat, afterSeq }), seatToAct: findSeatToAct(this.state) };
+      const action = this.getLegalActions(seat).actions.find((candidate) => candidate.id === actionId);
+      if (!action) {
+        return { ok: false, reason: "unknown-action", message: `There is no action ${actionId} right now`, events: [] };
+      }
+      const resolved = resolveActionIntent({ action, choice });
+      if (!resolved.ok) {
+        return { ok: false, reason: "invalid-choice", message: resolved.message, events: [] };
+      }
+      return this.applyAct({ seat, intent: resolved.intent });
     });
+  }
+
+  getLegalActions(seat: Seat): SimulatorActionList {
+    return {
+      version: this.acceptedActions,
+      actions: buildLegalActions({ state: this.state, seat, decisionRequest: this.getDecisionRequest(seat) }),
+    };
   }
 
   getSeatToAct(): Seat | undefined {
@@ -160,6 +181,29 @@ export class SimulatorSession {
     return () => {
       this.listeners.delete(listener);
     };
+  }
+
+  private async applyAct({ seat, intent }: ActParams): Promise<ActResult> {
+    const afterSeq = this.log.length;
+    if (!this.started || findSeatToAct(this.state) !== seat) {
+      return { ok: false, reason: "not-seat-to-act", events: [] };
+    }
+    try {
+      const result = this.recorder.applyIntent(seat, intent, () => this.engine.applyIntent(seat, intent));
+      if (!result.ok) {
+        return { ok: false, reason: result.reason, events: this.getEvents({ seat, afterSeq }) };
+      }
+    } catch (error) {
+      return {
+        ok: false,
+        reason: "engine-error",
+        message: error instanceof Error ? error.message : String(error),
+        events: this.getEvents({ seat, afterSeq }),
+      };
+    }
+    this.acceptedActions++;
+    await this.settle();
+    return { ok: true, events: this.getEvents({ seat, afterSeq }), seatToAct: findSeatToAct(this.state) };
   }
 
   private recordEvent(event: ServerEvent): void {
