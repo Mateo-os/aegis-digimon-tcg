@@ -10,6 +10,8 @@ import { resolveActionIntent } from "#api/simulator/actions/resolveActionIntent"
 import type { SimulatorActionList } from "#api/simulator/actions/SimulatorAction";
 import { filterEventForSeat } from "#api/simulator/filterEventForSeat";
 import { findSeatToAct } from "#api/simulator/findSeatToAct";
+import { buildSeatView } from "#api/simulator/view/buildSeatView";
+import type { SeatView } from "#api/simulator/view/SeatView";
 import "#api/cards/index";
 
 export type SimulatorDeck = { mainDeck: string[]; eggDeck: string[] };
@@ -136,6 +138,10 @@ export class SimulatorSession {
       version: this.acceptedActions,
       actions: buildLegalActions({ engine: this.engine, seat, decisionRequest: this.getDecisionRequest(seat) }),
     };
+  }
+
+  getSeatView(seat: Seat): SeatView {
+    return buildSeatView({ state: this.state, seat, ...(this.result ? { result: this.result } : {}) });
   }
 
   getSeatToAct(): Seat | undefined {
