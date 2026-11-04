@@ -10,6 +10,7 @@
     "logs:match": "node tools/match-logs.mjs",
     "client-error": "node tools/client-errors/client-error.mjs",
     "replay": "pnpm --silent --filter @aegis/api replay",
+    "sim": "pnpm --silent --filter @aegis/api sim",
     "scenario": "node tools/scenario.mjs",
     "motion:reference": "node tools/diagnostics/prepare-motion-reference.mjs",
     "motion:capture": "node tools/diagnostics/capture-field-focus.mjs",

@@ -64,6 +64,7 @@ export class SimulatorSession {
   private readonly log: SimulatorEvent[] = [];
   private readonly decisionRequests = new Map<Seat, DecisionRequest>();
   private readonly listeners = new Set<SimulatorEventListener>();
+  private readonly settledListeners = new Set<() => void>();
   private queue: Promise<unknown> = Promise.resolve();
   private result: SimulatorResult | undefined;
   private started = false;
@@ -140,6 +141,10 @@ export class SimulatorSession {
     };
   }
 
+  whenIdle(): Promise<void> {
+    return this.runExclusive(() => Promise.resolve());
+  }
+
   getSeatView(seat: Seat): SeatView {
     return buildSeatView({ state: this.state, seat, ...(this.result ? { result: this.result } : {}) });
   }
@@ -189,6 +194,19 @@ export class SimulatorSession {
     };
   }
 
+  subscribeToSettled(listener: () => void): () => void {
+    this.settledListeners.add(listener);
+    return () => {
+      this.settledListeners.delete(listener);
+    };
+  }
+
+  private notifySettled(): void {
+    for (const listener of this.settledListeners) {
+      listener();
+    }
+  }
+
   private async applyAct({ seat, intent }: ActParams): Promise<ActResult> {
     const afterSeq = this.log.length;
     if (!this.started || findSeatToAct(this.state) !== seat) {
@@ -207,8 +225,9 @@ export class SimulatorSession {
         events: this.getEvents({ seat, afterSeq }),
       };
     }
-    this.acceptedActions++;
     await this.settle();
+    this.acceptedActions++;
+    this.notifySettled();
     return { ok: true, events: this.getEvents({ seat, afterSeq }), seatToAct: findSeatToAct(this.state) };
   }
 

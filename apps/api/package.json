@@ -54,6 +54,7 @@
     "test:verification": "vitest run src/engine/fuzzer.test.ts src/engine/setup.test.ts src/engine/testkit/stateInvariants.test.ts src/engine/testkit/harness.test.ts src/engine/state/visibility.test.ts src/bot/battleFuzzer.test.ts src/bot/matchHarness.projections.test.ts --pool=forks --maxWorkers=1 --no-file-parallelism",
     "bench:bot": "BOT_BENCH=1 vitest run src/bot/benchmark.test.ts",
     "fuzz:battles": "pnpm build && node dist/bot/battleFuzzerCli.js",
+    "sim": "pnpm build && node dist/simulator/cli.js",
     "replay": "AEGIS_CARDS_BUNDLE=0 node --conditions=development --import=./test-support/ts-loader.mjs src/replays/inputs/cli.ts",
     "test:postgres": "POSTGRES_TESTS=1 vitest run src/db/postgres.atomicity",
     "test:parallel": "concurrently -n fast,cards 'pnpm test:fast' 'pnpm test:cards'",
