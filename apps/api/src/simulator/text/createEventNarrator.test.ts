@@ -51,9 +51,117 @@ describe("createEventNarrator", () => {
       ]),
     ).toEqual([
       "Claude attacked the player with Agumon Expert (BT1-011)",
-      "Agumon (BT1-010) was deleted",
+      "Your Agumon (BT1-010) was deleted",
       "Game over: Claude wins (security)",
     ]);
+  });
+
+  it("shows both DPs of a security battle and who won it", () => {
+    expect(
+      narrate([
+        {
+          kind: "attackDeclared",
+          seat: 0,
+          attackerPermanentId: "p1",
+          attackerCardId: "BT1-011",
+          target: { kind: "player" },
+        },
+        {
+          kind: "securityRevealed",
+          seat: 1,
+          revealedCardId: "BT1-010",
+          attackerPermanentId: "p1",
+          securityCardDP: 2000,
+          attackerDP: 5000,
+          securityCountBefore: 5,
+        },
+        {
+          kind: "securityChecked",
+          seat: 1,
+          revealedCardId: "BT1-010",
+          resolution: "battle",
+          battle: { attackerDeleted: false, securityDigimonDeleted: true, attackerDP: 5000, securityCardDP: 2000 },
+        },
+      ]),
+    ).toEqual([
+      "You attacked the player with Agumon Expert (BT1-011)",
+      "Security check (Claude's security, 4 left): Agumon (BT1-010) 2000 DP vs Agumon Expert (BT1-011) 5000 DP",
+      "Security battle: Agumon Expert (BT1-011) won",
+    ]);
+  });
+
+  it("says when the attacker loses a security battle and names the battle deletion", () => {
+    expect(
+      narrate([
+        {
+          kind: "attackDeclared",
+          seat: 0,
+          attackerPermanentId: "p1",
+          attackerCardId: "BT1-010",
+          target: { kind: "player" },
+        },
+        { kind: "securityRevealed", seat: 1, revealedCardId: "BT1-011", attackerPermanentId: "p1" },
+        {
+          kind: "cardsMoved",
+          battleDeletion: true,
+          deletedPermanents: [{ permanentId: "p1", instanceId: "i1", cardId: "BT1-010", seat: 0 }],
+        },
+        {
+          kind: "securityChecked",
+          seat: 1,
+          revealedCardId: "BT1-011",
+          resolution: "battle",
+          battle: { attackerDeleted: true, securityDigimonDeleted: false },
+        },
+        { kind: "securityChecked", seat: 1, revealedCardId: "BT1-085", resolution: "trashed" },
+      ]).slice(1),
+    ).toEqual([
+      "Security check (Claude's security): Agumon Expert (BT1-011)",
+      "Your Agumon (BT1-010) was deleted in battle",
+      "Security battle: Agumon (BT1-010) lost and was deleted",
+      "Tai Kamiya (BT1-085) was trashed",
+    ]);
+  });
+
+  it("names the winner of a battle between Digimon", () => {
+    expect(
+      narrate([
+        { kind: "hatched", seat: 0, permanentId: "p1", cardId: "BT1-010" },
+        { kind: "hatched", seat: 1, permanentId: "p2", cardId: "BT1-011" },
+        { kind: "battleCompared", attackerPermanentId: "p1", defenderPermanentId: "p2", loserPermanentIds: ["p1"] },
+        {
+          kind: "battleCompared",
+          attackerPermanentId: "p1",
+          defenderPermanentId: "p2",
+          loserPermanentIds: ["p1", "p2"],
+        },
+      ]).slice(2),
+    ).toEqual([
+      "Battle: Agumon (BT1-010) vs Agumon Expert (BT1-011), Agumon Expert (BT1-011) won",
+      "Battle: Agumon (BT1-010) vs Agumon Expert (BT1-011), both lost",
+    ]);
+  });
+
+  it("labels effect battles and names the cards that actually battled", () => {
+    expect(
+      narrate([
+        { kind: "hatched", seat: 0, permanentId: "p1", cardId: "BT1-010" },
+        {
+          kind: "battleCompared",
+          attackerPermanentId: "p1",
+          defenderPermanentId: "p2",
+          loserPermanentIds: ["p2"],
+          effectBattle: { attackerSeat: 0, attackerCardId: "BT1-011", defenderCardId: "BT1-085" },
+        },
+      ]).slice(1),
+    ).toEqual(["Effect battle: Agumon Expert (BT1-011) vs Tai Kamiya (BT1-085), Agumon Expert (BT1-011) won"]);
+  });
+
+  it("uses Your for the viewer's own effects", () => {
+    const [line] = narrate([
+      { kind: "effectTriggered", seat: 0, sourceCardId: "BT1-085", effectKey: "k", description: "Gain 1 memory." },
+    ]);
+    expect(line).toBe("Your Tai Kamiya (BT1-085): Gain 1 memory.");
   });
 
   it("only narrates the breeding and main phases and skips quiet events", () => {

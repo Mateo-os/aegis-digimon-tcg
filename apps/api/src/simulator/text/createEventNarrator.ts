@@ -31,6 +31,62 @@ export function createEventNarrator({ viewerSeat, playerNames }: Params) {
     }
   };
   const namePermanent = (permanentId: string) => permanentNames.get(permanentId) ?? "a Digimon";
+  const nameOwner = (seat: Seat) => (seat === viewerSeat ? "Your" : `${playerNames[seat]}'s`);
+  let securityAttacker = "the attacker";
+
+  const describeSecurityReveal = (event: Extract<ServerEvent, { kind: "securityRevealed" }>) => {
+    securityAttacker = namePermanent(event.attackerPermanentId);
+    const left = event.securityCountBefore === undefined ? "" : `, ${event.securityCountBefore - 1} left`;
+    const header = `Security check (${nameOwner(event.seat)} security${left}): ${formatCardName(event.revealedCardId)}`;
+    if (event.securityCardDP === undefined || event.attackerDP === undefined) {
+      return header;
+    }
+    return `${header} ${event.securityCardDP} DP vs ${securityAttacker} ${event.attackerDP} DP`;
+  };
+
+  const describeSecurityResult = (event: Extract<ServerEvent, { kind: "securityChecked" }>) => {
+    const card = formatCardName(event.revealedCardId);
+    if (event.resolution === "trashed") {
+      return `${card} was trashed`;
+    }
+    if (event.resolution === "effect" || !event.battle) {
+      return `${card}'s security effect resolved`;
+    }
+    const { attackerDeleted, securityDigimonDeleted } = event.battle;
+    if (attackerDeleted && securityDigimonDeleted) {
+      return `Security battle: both ${securityAttacker} and ${card} were deleted`;
+    }
+    if (attackerDeleted) {
+      return `Security battle: ${securityAttacker} lost and was deleted`;
+    }
+    if (securityDigimonDeleted) {
+      return `Security battle: ${securityAttacker} won`;
+    }
+    return "Security battle: no one was deleted";
+  };
+
+  const describeBattle = (event: Extract<ServerEvent, { kind: "battleCompared" }>) => {
+    if (event.effectBattle) {
+      remember(event.attackerPermanentId, event.effectBattle.attackerCardId);
+      remember(event.defenderPermanentId, event.effectBattle.defenderCardId);
+    }
+    const label = event.effectBattle ? "Effect battle" : "Battle";
+    const attacker = namePermanent(event.attackerPermanentId);
+    const defender = namePermanent(event.defenderPermanentId);
+    const losers = new Set(event.loserPermanentIds);
+    const attackerLost = losers.has(event.attackerPermanentId);
+    const defenderLost = losers.has(event.defenderPermanentId);
+    if (attackerLost && defenderLost) {
+      return `${label}: ${attacker} vs ${defender}, both lost`;
+    }
+    if (attackerLost) {
+      return `${label}: ${attacker} vs ${defender}, ${defender} won`;
+    }
+    if (defenderLost) {
+      return `${label}: ${attacker} vs ${defender}, ${attacker} won`;
+    }
+    return `${label}: ${attacker} vs ${defender}, no one lost`;
+  };
 
   function describe(event: ServerEvent): string | undefined {
     switch (event.kind) {
@@ -69,8 +125,12 @@ export function createEventNarrator({ viewerSeat, playerNames }: Params) {
         return `Blocked by ${namePermanent(event.blockerPermanentId)}`;
       case "blockDeclined":
         return "No block";
+      case "securityRevealed":
+        return describeSecurityReveal(event);
       case "securityChecked":
-        return `Security check: ${formatCardName(event.revealedCardId)} (${event.resolution})`;
+        return describeSecurityResult(event);
+      case "battleCompared":
+        return describeBattle(event);
       case "deletionPrevented":
         remember(event.permanentId, event.cardId);
         return `${namePermanent(event.permanentId)} was saved by ${event.keyword}`;
@@ -80,7 +140,10 @@ export function createEventNarrator({ viewerSeat, playerNames }: Params) {
         return event.accepted ? `${namePermanent(event.permanentId)} used Barrier` : undefined;
       case "cardsMoved": {
         const lines = [
-          ...(event.deletedPermanents ?? []).map((gone) => `${formatCardName(gone.cardId)} was deleted`),
+          ...(event.deletedPermanents ?? []).map(
+            (gone) =>
+              `${nameOwner(gone.seat)} ${formatCardName(gone.cardId)} was deleted${event.battleDeletion ? " in battle" : ""}`,
+          ),
           ...(event.returnedPermanents ?? []).map((gone) => `${formatCardName(gone.cardId)} was returned`),
         ];
         return lines.length > 0 ? lines.join("\n") : undefined;
@@ -88,7 +151,7 @@ export function createEventNarrator({ viewerSeat, playerNames }: Params) {
       case "securityRecovered":
         return `${nameSeat(event.seat)} added ${event.amount} card(s) to security`;
       case "effectTriggered":
-        return `${nameSeat(event.seat)}'s ${formatCardName(event.sourceCardId)}: ${shorten(event.description)}`;
+        return `${nameOwner(event.seat)} ${formatCardName(event.sourceCardId)}: ${shorten(event.description)}`;
       case "actionRejected":
         return `Action rejected: ${event.reason}`;
       case "gameOver":
