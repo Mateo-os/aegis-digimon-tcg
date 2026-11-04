@@ -130,6 +130,22 @@ function buildTriggerOrderActions({ request }: Params): SimulatorActionDraft[] {
   });
 }
 
+type OrderDestination = NonNullable<NonNullable<DecisionRequest["options"]>["orderDestination"]>;
+
+function describeOrderDestination(destination: OrderDestination | undefined): string {
+  switch (destination) {
+    case "deckBottom":
+      return "these go to the bottom of the deck: the first card you list ends up highest, the last one at the very bottom";
+    case "stackTop":
+      return "the first card you list sits directly under the top card";
+    case "stackBottom":
+      return "the first card you list becomes the bottom card of the stack";
+    case "deckTop":
+    case undefined:
+      return "the first card you list ends up on top";
+  }
+}
+
 export function buildDecisionActions(params: Params): SimulatorActionDraft[] {
   const { request } = params;
   switch (request.kind) {
@@ -163,11 +179,10 @@ export function buildDecisionActions(params: Params): SimulatorActionDraft[] {
     case "selectCards":
       return buildSelectionActions({ ...params, responseKind: request.kind });
     case "orderCards": {
-      const destination = request.options?.orderDestination;
       return [
         {
           kind: "order",
-          label: `${request.promptText}${destination ? ` (first card goes to ${destination})` : ""}`,
+          label: `${request.promptText} (${describeOrderDestination(request.options?.orderDestination)})`,
           decisionId: request.decisionId,
           candidates: buildCandidates(params),
         },

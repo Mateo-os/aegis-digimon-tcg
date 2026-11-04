@@ -4,6 +4,8 @@ import { getCardDefinition } from "@aegis/shared/cards/registry";
 import type { Seat } from "@aegis/shared/schema/enums";
 import type { SimulatorSession } from "#api/simulator/SimulatorSession";
 import { waitForSeatTurn } from "#api/simulator/server/waitForSeatTurn";
+import { renderActions } from "#api/simulator/text/renderActions";
+import { renderSeatView } from "#api/simulator/text/renderSeatView";
 
 type Params = {
   session: SimulatorSession;
@@ -100,13 +102,14 @@ export function createSimulatorApp({
 
   app.get("/view", async (_req, res) => {
     await session.whenIdle();
-    const seat = getSeat(res);
-    res.json({ view: session.getSeatView(seat), seatToAct: session.getSeatToAct(), lastSeq: session.getLastSeq() });
+    const view = session.getSeatView(getSeat(res));
+    res.json({ view, seatToAct: session.getSeatToAct(), lastSeq: session.getLastSeq(), text: renderSeatView(view) });
   });
 
   app.get("/actions", async (_req, res) => {
     await session.whenIdle();
-    res.json(session.getLegalActions(getSeat(res)));
+    const list = session.getLegalActions(getSeat(res));
+    res.json({ ...list, text: renderActions(list.actions) });
   });
 
   app.post("/actions", async (req, res) => {

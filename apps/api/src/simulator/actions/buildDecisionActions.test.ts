@@ -131,12 +131,21 @@ describe("buildDecisionActions", () => {
     );
     expect(action).toMatchObject({
       kind: "order",
-      label: "Choose (first card goes to deckTop)",
+      label: "Choose (the first card you list ends up on top)",
       candidates: [
         { key: "a", instanceId: "card-a" },
         { key: "b", instanceId: "card-b" },
       ],
     });
+  });
+
+  it("explains that the last listed card goes to the very bottom of the deck", () => {
+    const [action] = buildActions(
+      buildRequest("orderCards", { candidateInstanceIds: ["card-a", "card-b"], orderDestination: "deckBottom" }),
+    );
+    expect(action?.label).toBe(
+      "Choose (these go to the bottom of the deck: the first card you list ends up highest, the last one at the very bottom)",
+    );
   });
 
   it("names cards it cannot see as hidden", () => {

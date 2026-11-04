@@ -14,6 +14,7 @@ console.log =
 const USAGE = `Usage:
   pnpm sim serve --deck0 <deck> --deck1 <deck> [options]
   pnpm sim serve --load <game.json> [options]
+  pnpm sim play --token <token> [--url http://127.0.0.1:7777]
   pnpm sim decks
 
 A <deck> is a deck file (.json with mainDeck and eggDeck), a meta deck version, or a tournament deck version.
@@ -39,6 +40,8 @@ const OPTIONS = {
   load: { type: "string" },
   token0: { type: "string" },
   token1: { type: "string" },
+  token: { type: "string" },
+  url: { type: "string", default: "http://127.0.0.1:7777" },
 } as const;
 
 type ServeOptions = ReturnType<typeof parseArgs<{ options: typeof OPTIONS; allowPositionals: true }>>["values"];
@@ -148,6 +151,14 @@ async function main(): Promise<number> {
   }
   if (command === "serve") {
     await serve(values);
+    return 0;
+  }
+  if (command === "play") {
+    if (!values.token) {
+      throw new Error("Give your seat token with --token (the server prints one per seat)");
+    }
+    const { runTerminalClient } = await import("#api/simulator/client/runTerminalClient");
+    await runTerminalClient({ url: values.url, token: values.token, input: process.stdin, output: process.stdout });
     return 0;
   }
   process.stderr.write(`${USAGE}\n`);

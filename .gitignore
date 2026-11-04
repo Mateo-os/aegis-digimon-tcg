@@ -73,5 +73,5 @@ apps/web/public/dev/modal-review/manifest.json
 
 # Throwaway scenario fixtures for pnpm scenario open (committed regression fixtures live with tests)
 /.local/scenarios/
-
+/game.json
 /docs/audits/**/*.md
