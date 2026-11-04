@@ -1,6 +1,10 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
+import { BotDifficulty } from "@aegis/shared/bot/BotDifficulty";
+import { BotStyle } from "@aegis/shared/bot/BotStyle";
+import { isBotDifficulty } from "@aegis/shared/bot/isBotDifficulty";
+import { isBotStyle } from "@aegis/shared/bot/isBotStyle";
 
 process.env.NODE_ENV = "test";
 process.env.AEGIS_STRICT_EFFECTS ??= "0";
@@ -26,7 +30,11 @@ Options:
   --port <n>             Port to listen on (default 7777)
   --save <game.json>     Save the game after every accepted action
   --load <game.json>     Resume a saved game
-  --token0, --token1     Fixed seat tokens (default: random each start)`;
+  --token0, --token1     Fixed seat tokens (default: random each start)
+  --bot0, --bot1 <style> Let a bot play that seat: balanced, aggressive or defensive
+  --bot0-level, --bot1-level <level>
+                         The bot's level: beginner, casual or standard (default standard)
+  --bot-delay <ms>       How long bots think before each move (default 600)`;
 
 const OPTIONS = {
   deck0: { type: "string" },
@@ -42,7 +50,16 @@ const OPTIONS = {
   token1: { type: "string" },
   token: { type: "string" },
   url: { type: "string", default: "http://127.0.0.1:7777" },
+  bot0: { type: "string" },
+  bot1: { type: "string" },
+  "bot0-level": { type: "string" },
+  "bot1-level": { type: "string" },
+  "bot-delay": { type: "string" },
 } as const;
+
+type BotSetup = { style: BotStyle; difficulty: BotDifficulty };
+
+const SEATS = [0, 1] as const;
 
 type ServeOptions = ReturnType<typeof parseArgs<{ options: typeof OPTIONS; allowPositionals: true }>>["values"];
 
@@ -80,6 +97,32 @@ async function listDecks(): Promise<void> {
   }
 }
 
+function readBotSetup(options: ServeOptions, seat: 0 | 1): BotSetup | undefined {
+  const style = seat === 0 ? options.bot0 : options.bot1;
+  const level = (seat === 0 ? options["bot0-level"] : options["bot1-level"]) ?? BotDifficulty.STANDARD.value;
+  if (style === undefined) {
+    return undefined;
+  }
+  if (!isBotStyle(style)) {
+    throw new Error(
+      `--bot${seat} must be one of: ${Object.values(BotStyle)
+        .map((entry) => entry.value)
+        .join(", ")}`,
+    );
+  }
+  if (!isBotDifficulty(level)) {
+    throw new Error(`--bot${seat}-level must be a bot level such as ${BotDifficulty.STANDARD.value}`);
+  }
+  return { style, difficulty: level };
+}
+
+function getDefaultName(seat: 0 | 1, bot: BotSetup | undefined): string {
+  if (bot) {
+    return `Bot (${bot.style}, ${bot.difficulty})`;
+  }
+  return `Player ${seat + 1}`;
+}
+
 function resolveUserPath(path: string): string {
   return resolve(process.env.INIT_CWD ?? process.cwd(), path);
 }
@@ -88,8 +131,8 @@ function resolveDeckSpec(spec: string): string {
   return spec.endsWith(".json") ? resolveUserPath(spec) : spec;
 }
 
-async function createSession(options: ServeOptions) {
-  const names = [options.name0 ?? "Player 1", options.name1 ?? "Player 2"] as const;
+async function createSession(options: ServeOptions, bots: readonly [BotSetup | undefined, BotSetup | undefined]) {
+  const names = [options.name0 ?? getDefaultName(0, bots[0]), options.name1 ?? getDefaultName(1, bots[1])] as const;
   if (options.load) {
     const { loadSimulatorSession } = await import("#api/simulator/loadSimulatorSession");
     const record = JSON.parse(readFileSync(resolveUserPath(options.load), "utf8"));
@@ -114,7 +157,14 @@ async function createSession(options: ServeOptions) {
 }
 
 async function serve(options: ServeOptions): Promise<void> {
-  const session = await createSession(options);
+  const bots = [readBotSetup(options, 0), readBotSetup(options, 1)] as const;
+  const { createBasicBotPolicy } = await import("#api/simulator/bots/createBasicBotPolicy");
+  const botSeed = readInteger(options.seed, "seed") ?? Math.floor(Math.random() * 2 ** 31);
+  const policies = SEATS.map((seat) => {
+    const bot = bots[seat];
+    return bot ? createBasicBotPolicy({ ...bot, seed: botSeed + seat * 7919 }) : undefined;
+  });
+  const session = await createSession(options, bots);
   const { startSimulatorServer } = await import("#api/simulator/server/startSimulatorServer");
   const requestedSavePath = options.save ?? options.load;
   const savePath = requestedSavePath ? resolveUserPath(requestedSavePath) : undefined;
@@ -124,12 +174,33 @@ async function serve(options: ServeOptions): Promise<void> {
     ...(savePath ? { savePath } : {}),
     seatTokens: [options.token0, options.token1],
   });
-  const view = session.getSeatView(0);
+  const { startBotSeat } = await import("#api/simulator/bots/startBotSeat");
+  const thinkDelayMs = readInteger(options["bot-delay"], "bot-delay");
+  for (const seat of SEATS) {
+    const policy = policies[seat];
+    if (policy) {
+      startBotSeat({
+        session,
+        seat,
+        policy,
+        ...(thinkDelayMs === undefined ? {} : { thinkDelayMs }),
+        onError: (error) => {
+          process.stderr.write(`Seat ${seat} bot stopped: ${error instanceof Error ? error.message : String(error)}
+`);
+        },
+      });
+    }
+  }
+  const names = [session.getSeatView(0).you.displayName, session.getSeatView(1).you.displayName];
+  const describeSeat = (seat: 0 | 1) => {
+    const bot = bots[seat];
+    return bot ? `bot (${bot.style}, ${bot.difficulty})` : `token ${server.seatTokens[seat]}`;
+  };
   process.stdout.write(
     [
       `Aegis simulator running at ${server.url}`,
-      `  Seat 0 (${view.you.displayName}): token ${server.seatTokens[0]}`,
-      `  Seat 1 (${view.opponent.displayName}): token ${server.seatTokens[1]}`,
+      `  Seat 0 (${names[0]}): ${describeSeat(0)}`,
+      `  Seat 1 (${names[1]}): ${describeSeat(1)}`,
       ...(savePath ? [`  Saving to ${savePath}`] : []),
       "Press Ctrl+C to stop.",
       "",

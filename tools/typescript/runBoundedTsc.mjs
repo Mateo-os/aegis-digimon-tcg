@@ -4,6 +4,7 @@ import { constants } from "node:os";
 
 const executeFile = promisify(execFile);
 const signalExitCodes = { SIGINT: 130, SIGTERM: 143 };
+const MAX_CONSECUTIVE_SAMPLE_FAILURES = 5;
 
 async function getProcesses() {
   if (process.platform === "win32") {
@@ -87,6 +88,7 @@ export async function runBoundedTsc({
   let killTimer;
   let finished = false;
   let stopping = false;
+  let failedSamples = 0;
 
   function sendSignal(signal) {
     if (!child.pid) {
@@ -124,6 +126,7 @@ export async function runBoundedTsc({
       if (finished || stopping) {
         return;
       }
+      failedSamples = 0;
       const rss = getTreeRss({ entries, pid: child.pid });
       peakBytes = Math.max(peakBytes, rss);
       if (rss > maxRssMiB * 1024 ** 2) {
@@ -133,10 +136,22 @@ export async function runBoundedTsc({
         });
         return;
       }
-      monitorTimer = setTimeout(monitorCompiler, 250);
     } catch (error) {
-      stopCompiler({ code: 1, reason: `Memory monitoring failed: ${error.message}` });
+      if (finished || stopping) {
+        return;
+      }
+      failedSamples += 1;
+      const cause = String(error.message).split("\n")[0];
+      if (failedSamples >= MAX_CONSECUTIVE_SAMPLE_FAILURES) {
+        stopCompiler({
+          code: 1,
+          reason: `Memory monitoring failed ${failedSamples} times in a row: ${cause}`,
+        });
+        return;
+      }
+      log(`[tsc] Memory sample failed (${failedSamples}/${MAX_CONSECUTIVE_SAMPLE_FAILURES}), retrying: ${cause}`);
     }
+    monitorTimer = setTimeout(monitorCompiler, 250);
   }
 
   const handlers = Object.fromEntries(

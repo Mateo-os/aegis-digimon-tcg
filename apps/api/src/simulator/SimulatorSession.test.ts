@@ -1,10 +1,9 @@
 import { describe, expect, it } from "vitest";
-import type { ServerEvent } from "@aegis/shared/protocol/events";
 import type { Intent } from "@aegis/shared/protocol/intents";
-import { Phase, type Seat } from "@aegis/shared/schema/enums";
+import type { Seat } from "@aegis/shared/schema/enums";
 import { metaDeckByVersion } from "#api/bot/metaDecks/index";
 import { createEvaluationPolicy, type BotPolicy } from "#api/bot/policy";
-import { buildBotView, type BotView } from "#api/bot/view";
+import { chooseBotIntent } from "#api/simulator/bots/chooseBotIntent";
 import type { SimulatorAction } from "#api/simulator/actions/SimulatorAction";
 import { SimulatorSession, type SimulatorDeck } from "#api/simulator/SimulatorSession";
 
@@ -18,8 +17,6 @@ type PlayWithBotsParams = {
 };
 
 type PlayRandomlyParams = { session: SimulatorSession; seed: number; maxSteps: number };
-
-type ChooseIntentParams = { session: SimulatorSession; policy: BotPolicy; seat: Seat; view: BotView };
 
 const MATCHUPS: readonly (readonly [string, string])[] = [
   ["bt4-yellow-wargreymon@1", "bt5-lordknightmon@1"],
@@ -46,52 +43,6 @@ function createSession(seed: number, [left, right] = MATCHUPS[0]!): SimulatorSes
   });
 }
 
-function findLatestEvent<K extends ServerEvent["kind"]>(session: SimulatorSession, seat: Seat, kind: K) {
-  const events = session.getEvents({ seat, afterSeq: 0 });
-  for (let index = events.length - 1; index >= 0; index--) {
-    const { event } = events[index]!;
-    if (event.kind === kind) {
-      return event as Extract<ServerEvent, { kind: K }>;
-    }
-  }
-  throw new Error(`No ${kind} event was emitted`);
-}
-
-function chooseIntent({ session, policy, seat, view }: ChooseIntentParams): Intent {
-  const state = session.getState();
-  const request = session.getDecisionRequest(seat);
-  if (request) {
-    return policy.answerDecision(view, request);
-  }
-  const window = state.combatWindow;
-  if (window?.kind === "block") {
-    const attack = findLatestEvent(session, seat, "attackDeclared");
-    return policy.chooseBlockResponse(view, {
-      attackerPermanentId: window.attackerPermanentId,
-      eligibleBlockerIds: [...window.eligiblePermanentIds],
-      mustBlock: window.mustBlock,
-      targetsPlayer: attack.target.kind === "player",
-      ...(attack.target.kind === "permanent" ? { targetPermanentId: attack.target.permanentId } : {}),
-    });
-  }
-  if (window?.kind === "counter") {
-    return policy.chooseCounterResponse(view, findLatestEvent(session, seat, "counterWindowOpened"));
-  }
-  if (window?.kind === "alliance") {
-    return policy.chooseAllianceResponse(view, findLatestEvent(session, seat, "alliancePrompt"));
-  }
-  if (window?.kind === "evade") {
-    return policy.chooseEvadeResponse(view, window.permanentId);
-  }
-  if (window?.kind === "barrier") {
-    return policy.chooseBarrierResponse(view, window.permanentId);
-  }
-  if (state.phase === Phase.Breeding) {
-    return policy.chooseBreedingAction(view);
-  }
-  return policy.chooseMainAction(view);
-}
-
 async function playWithBots({ session, policies, maxSteps, onAccepted }: PlayWithBotsParams) {
   const counts = { accepted: 0, rejected: 0 };
   let consecutiveRejections = 0;
@@ -108,12 +59,8 @@ async function playWithBots({ session, policies, maxSteps, onAccepted }: PlayWit
       policies[0].onTurnStart();
       policies[1].onTurnStart();
     }
-    const view = buildBotView(state, seat);
-    if (!view) {
-      throw new Error(`No bot view for seat ${seat}`);
-    }
     const tooManyRejections = consecutiveRejections >= MAX_CONSECUTIVE_REJECTIONS;
-    const intent: Intent = tooManyRejections ? { type: "endPhase" } : chooseIntent({ session, policy, seat, view });
+    const intent: Intent = tooManyRejections ? { type: "endPhase" } : chooseBotIntent({ session, policy, seat });
     const offered = session.getLegalActions(seat).actions;
     const result = await session.act({ seat, intent });
     if (result.ok) {
