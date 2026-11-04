@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { networkInterfaces } from "node:os";
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { BotDifficulty } from "@aegis/shared/bot/BotDifficulty";
@@ -28,6 +29,8 @@ Options:
   --seed <n>             Shuffle seed (default: random)
   --first-seat <0|1>     Who goes first (default: decided by the seed)
   --port <n>             Port to listen on (default 7777)
+  --host <address>       Address to listen on (default 127.0.0.1, this machine only;
+                         0.0.0.0 lets other machines on your network connect)
   --save <game.json>     Save the game after every accepted action
   --load <game.json>     Resume a saved game
   --token0, --token1     Fixed seat tokens (default: random each start)
@@ -44,6 +47,7 @@ const OPTIONS = {
   seed: { type: "string" },
   "first-seat": { type: "string" },
   port: { type: "string", default: "7777" },
+  host: { type: "string", default: "127.0.0.1" },
   save: { type: "string" },
   load: { type: "string" },
   token0: { type: "string" },
@@ -60,6 +64,9 @@ const OPTIONS = {
 type BotSetup = { style: BotStyle; difficulty: BotDifficulty };
 
 const SEATS = [0, 1] as const;
+
+const LOCAL_ONLY_HOSTS: ReadonlySet<string> = new Set(["127.0.0.1", "localhost", "::1"]);
+const ALL_INTERFACE_HOSTS: ReadonlySet<string> = new Set(["0.0.0.0", "::"]);
 
 type ServeOptions = ReturnType<typeof parseArgs<{ options: typeof OPTIONS; allowPositionals: true }>>["values"];
 
@@ -123,6 +130,24 @@ function getDefaultName(seat: 0 | 1, bot: BotSetup | undefined): string {
   return `Player ${seat + 1}`;
 }
 
+type RemoteAccessParams = { host: string; port: string };
+
+function describeRemoteAccess({ host, port }: RemoteAccessParams): string[] {
+  if (LOCAL_ONLY_HOSTS.has(host)) {
+    return [];
+  }
+  const addresses = ALL_INTERFACE_HOSTS.has(host)
+    ? Object.values(networkInterfaces())
+        .flat()
+        .filter((entry) => entry !== undefined && entry.family === "IPv4" && !entry.internal)
+        .map((entry) => `http://${entry!.address}:${port}`)
+    : [];
+  return [
+    ...(addresses.length > 0 ? [`  Other machines can connect to: ${addresses.join(", ")}`] : []),
+    "  This server is reachable from other machines. Give each player only their own seat's token.",
+  ];
+}
+
 function resolveUserPath(path: string): string {
   return resolve(process.env.INIT_CWD ?? process.cwd(), path);
 }
@@ -170,6 +195,7 @@ async function serve(options: ServeOptions): Promise<void> {
   const savePath = requestedSavePath ? resolveUserPath(requestedSavePath) : undefined;
   const server = await startSimulatorServer({
     session,
+    host: options.host,
     port: readInteger(options.port, "port") ?? 7777,
     ...(savePath ? { savePath } : {}),
     seatTokens: [options.token0, options.token1],
@@ -185,8 +211,7 @@ async function serve(options: ServeOptions): Promise<void> {
         policy,
         ...(thinkDelayMs === undefined ? {} : { thinkDelayMs }),
         onError: (error) => {
-          process.stderr.write(`Seat ${seat} bot stopped: ${error instanceof Error ? error.message : String(error)}
-`);
+          process.stderr.write(`Seat ${seat} bot stopped: ${error instanceof Error ? error.message : String(error)}\n`);
         },
       });
     }
@@ -199,6 +224,7 @@ async function serve(options: ServeOptions): Promise<void> {
   process.stdout.write(
     [
       `Aegis simulator running at ${server.url}`,
+      ...describeRemoteAccess({ host: options.host, port: server.url.split(":").at(-1) ?? "" }),
       `  Seat 0 (${names[0]}): ${describeSeat(0)}`,
       `  Seat 1 (${names[1]}): ${describeSeat(1)}`,
       ...(savePath ? [`  Saving to ${savePath}`] : []),
